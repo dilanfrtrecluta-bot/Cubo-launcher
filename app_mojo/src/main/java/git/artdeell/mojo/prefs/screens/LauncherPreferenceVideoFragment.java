@@ -1,142 +1,78 @@
 package git.artdeell.mojo.prefs.screens;
 
-import android.app.Activity;
 import android.content.SharedPreferences;
-import android.content.pm.PackageManager;
+import android.content.res.ColorStateList;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
-
-import androidx.activity.result.ActivityResultLauncher;
-import androidx.preference.ListPreference;
-import androidx.preference.Preference;
-import androidx.preference.SwitchPreferenceCompat;
-
-import git.artdeell.mojo.BuildConfig;
-import git.artdeell.mojo.R;
-
-import git.artdeell.mojo.contracts.OpenDocumentWithExtension;
+import android.view.*;
+import android.widget.*;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.fragment.app.Fragment;
+import git.artdeell.mojo.Tools;
 import git.artdeell.mojo.game.renderer.RendererCache;
-import git.artdeell.mojo.game.renderer.extra.GLESProvider;
-import git.artdeell.mojo.prefs.CustomSeekBarPreference;
 import git.artdeell.mojo.prefs.LauncherPreferences;
-import git.artdeell.mojo.utils.GpuUtils;
-import git.artdeell.mojo.vulkan.DriverInstaller;
-import git.artdeell.mojo.vulkan.DriverManager;
-import git.artdeell.mojo.vulkan.driver.BuiltinDriver;
-import git.artdeell.mojo.vulkan.driver.Driver;
-import git.artdeell.mojo.vulkan.ui.DriverConfigDialog;
 
-/**
- * Fragment for any settings video related
- */
-public class LauncherPreferenceVideoFragment extends LauncherPreferenceFragment {
-    private Boolean hasAngle = null;
-
-    private DriverConfigDialog mDialogScreen;
-    private final ActivityResultLauncher<Object> mInstallDriver =
-            registerForActivityResult(new OpenDocumentWithExtension("zip"), data -> {
-                if(data != null) DriverInstaller.installDriverFromUri(getContext(), data, this::openDriverDialog);
-            });
-    @Override
-    public void onCreatePreferences(Bundle b, String str) {
-        addPreferencesFromResource(R.xml.pref_video);
-        int resolution = (int) (LauncherPreferences.PREF_SCALE_FACTOR * 100);
-
-        CustomSeekBarPreference resolutionSeekbar = requirePreference("resolutionRatio",
-                CustomSeekBarPreference.class);
-        resolutionSeekbar.setSuffix(" %");
-
-        // #724 bug fix
-        if (resolution < 25) {
-            resolutionSeekbar.setValue(100);
-        } else {
-            resolutionSeekbar.setValue(resolution);
-        }
-
-        // Sustained performance is only available since Nougat
-        SwitchPreferenceCompat sustainedPerfSwitch = requirePreference("sustainedPerformance",
-                SwitchPreferenceCompat.class);
-        sustainedPerfSwitch.setVisible(Build.VERSION.SDK_INT >= Build.VERSION_CODES.N);
-        sustainedPerfSwitch.setChecked(LauncherPreferences.PREF_SUSTAINED_PERFORMANCE);
-
-        requirePreference("alternate_surface", SwitchPreferenceCompat.class).setChecked(LauncherPreferences.PREF_USE_ALTERNATE_SURFACE);
-        requirePreference("force_vsync", SwitchPreferenceCompat.class).setChecked(LauncherPreferences.PREF_FORCE_VSYNC);
-
-        // Show ANGLE switch only if AnglePlugin is available
-        if(hasAngle == null) {
-            GLESProvider provider = GLESProvider.getGlesProvider(getContext(), true);
-            hasAngle = provider instanceof GLESProvider.ExternalAngleProvider || provider instanceof GLESProvider.SystemAngleProvider;
-        }
-
-        SwitchPreferenceCompat angleSwitch = requirePreference("use_angle", SwitchPreferenceCompat.class);
-        angleSwitch.setVisible(hasAngle);
-        angleSwitch.setChecked(LauncherPreferences.PREF_USE_ANGLE);
-
-        ListPreference rendererListPreference = requirePreference("renderer",
-                ListPreference.class);
-        RendererCache list = RendererCache.getCompatibleRenderers(getContext());
-        rendererListPreference.setEntries(list.rendererDisplayNames);
-        rendererListPreference.setEntryValues(list.rendererIds.toArray(new String[0]));
-
-
-        Preference drivers = requirePreference("manageDrivers");
-        drivers.setOnPreferenceClickListener(pref -> {
-            openDriverDialog();
-            return true;
-        });
-        SwitchPreferenceCompat customVk = requirePreference("zinkPreferSystemDriver", SwitchPreferenceCompat.class);
-        boolean gplay = BuildConfig.BUILD_TYPE.equals("gplay");
-        boolean isAdreno = GpuUtils.getGlInfo().isAdreno();
-        boolean hasSupport = DriverManager.isSupportedByDevice();
-        customVk.setVisible(hasSupport && (!gplay || isAdreno));
-        customVk.setChecked(LauncherPreferences.PREF_ZINK_PREFER_SYSTEM_DRIVER);
-
-        computeVisibility();
-    }
-
-    @Override
-    public void onResume() {
-        super.onResume();
-        Activity activity = getActivity();
-        if(activity != null) {
-            requirePreference("ignoreNotch").setVisible(LauncherPreferences.hasNotch(activity));
-        }
-    }
-
-    @Override
-    public void onSharedPreferenceChanged(SharedPreferences p, String s) {
-        super.onSharedPreferenceChanged(p, s);
-        computeVisibility();
-    }
-
-    private void computeVisibility(){
-        requirePreference("force_vsync", SwitchPreferenceCompat.class)
-                .setVisible(LauncherPreferences.PREF_USE_ALTERNATE_SURFACE);
-        updateDriversPref();
-    }
-
-    private void openDriverDialog(){
-        if(mDialogScreen == null) {
-            mDialogScreen = new DriverConfigDialog();
-            mDialogScreen.prepare(getContext(), mInstallDriver);
-            mDialogScreen.onDismiss(this::updateDriversPref);
-        }
-        mDialogScreen.show();
-    }
-    private void updateDriversPref(){
-
-        Preference preference = requirePreference("manageDrivers");
-        boolean hasSupport = DriverManager.isSupportedByDevice();
-        boolean gplay = BuildConfig.BUILD_TYPE.equals("gplay");
-        if(LauncherPreferences.PREF_ZINK_PREFER_SYSTEM_DRIVER || gplay || !hasSupport){
-            preference.setVisible(false);
-            return;
-        }
-        Driver driver = DriverManager.getPreferredDriver();
-        if(driver instanceof BuiltinDriver)
-            preference.setSummary(BuiltinDriver.deviceHasDriver() ? R.string.driver_default_name : R.string.driver_config_pref_subtitle);
-        else
-            preference.setSummary(driver.getName());
-        preference.setVisible(true);
-    }
+/** Native Cubo video screen backed by the original Mojo preference keys. */
+public class LauncherPreferenceVideoFragment extends Fragment {
+ private static final int BG=0xFF060C09,CARD=0xFF111E18,TEXT=0xFFF0F8F3,MUTED=0xFF9CAFA3,ACCENT=0xFF35D6A0;
+ private LinearLayout body, renderers;
+ private Switch vsync;
+ private boolean binding;
+ private int dp(int n){return Math.round(n*getResources().getDisplayMetrics().density);}
+ private SharedPreferences prefs(){return LauncherPreferences.DEFAULT_PREF;}
+ private GradientDrawable shape(int color,boolean selected){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(22));d.setStroke(dp(1),selected?ACCENT:0xFF2A3B31);return d;}
+ private LinearLayout column(){LinearLayout l=new LinearLayout(requireContext());l.setOrientation(LinearLayout.VERTICAL);return l;}
+ private TextView text(String value,int size,int color){TextView t=new TextView(requireContext());t.setText(value);t.setTextSize(size);t.setTextColor(color);return t;}
+ private void title(LinearLayout parent,String value){TextView t=text(value,19,TEXT);t.setTypeface(Typeface.DEFAULT,Typeface.BOLD);parent.addView(t);}
+ private void note(LinearLayout parent,String value){TextView t=text(value,14,MUTED);t.setPadding(0,dp(7),0,dp(6));parent.addView(t);}
+ private void section(String value){TextView t=text(value,12,ACCENT);t.setLetterSpacing(0.13f);t.setPadding(dp(3),dp(26),0,dp(4));body.addView(t);}
+ private LinearLayout card(LinearLayout parent,boolean selected){LinearLayout c=column();c.setPadding(dp(18),dp(18),dp(18),dp(18));c.setBackground(shape(CARD,selected));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(12);parent.addView(c,p);return c;}
+ private void saveBoolean(String key,boolean value){prefs().edit().putBoolean(key,value).apply();LauncherPreferences.loadPreferences(requireContext());}
+ @Override public View onCreateView(@NonNull LayoutInflater inflater,@Nullable ViewGroup container,@Nullable Bundle saved){
+  ScrollView scroll=new ScrollView(requireContext());scroll.setFillViewport(true);scroll.setBackgroundColor(BG);
+  body=column();body.setPadding(dp(18),dp(22),dp(18),dp(32));scroll.addView(body);
+  TextView heading=text("Gráficos",30,TEXT);heading.setTypeface(Typeface.DEFAULT,Typeface.BOLD);body.addView(heading);
+  note(body,"CUBO  /  "+Build.MANUFACTURER+" "+Build.MODEL);
+  LinearLayout info=card(body,false);note(info,"Ajusta la imagen a tu dispositivo. Los cambios se aplican al próximo inicio del juego.");
+  section("MOTOR DE RENDERIZADO");renderers=column();body.addView(renderers);rendererCards();
+  section("CALIDAD DE IMAGEN");LinearLayout image=card(body,false);resolution(image);
+  section("PANTALLA Y FLUIDEZ");LinearLayout display=card(body,false);
+  toggle(display,"Superficie alternativa","Cambia cómo se presenta la imagen. Puede ayudar en algunos dispositivos.","alternate_surface",LauncherPreferences.PREF_USE_ALTERNATE_SURFACE,value->{if(vsync!=null){vsync.setEnabled(value);vsync.setAlpha(value?1f:0.45f);}});
+  vsync=toggle(display,"Sincronización vertical","Intenta sincronizar la imagen con la pantalla. Disponible con superficie alternativa.","force_vsync",LauncherPreferences.PREF_FORCE_VSYNC,null);
+  vsync.setEnabled(LauncherPreferences.PREF_USE_ALTERNATE_SURFACE);vsync.setAlpha(LauncherPreferences.PREF_USE_ALTERNATE_SURFACE?1f:0.45f);
+  if(Build.VERSION.SDK_INT>=24)toggle(display,"Rendimiento sostenido","Solicita un rendimiento más estable durante sesiones largas; el efecto depende del teléfono.","sustainedPerformance",LauncherPreferences.PREF_SUSTAINED_PERFORMANCE,null);
+  if(LauncherPreferences.hasNotch(requireActivity()))toggle(display,"Usar zona de la cámara","Permite extender el juego hacia la zona del recorte de pantalla.","ignoreNotch",prefs().getBoolean("ignoreNotch",false),null);
+  section("OPCIONES ESPECIALIZADAS");LinearLayout advanced=card(body,false);title(advanced,"Drivers y compatibilidad");note(advanced,"ANGLE, controladores Vulkan y opciones completas del motor. Se conserva el gestor original para estas funciones.");
+  Button b=new Button(requireContext());b.setText("Abrir opciones avanzadas  ›");b.setAllCaps(false);b.setTextColor(BG);b.setBackgroundTintList(null);b.setBackground(shape(ACCENT,false));LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-1,dp(56));bp.topMargin=dp(12);advanced.addView(b,bp);
+  b.setOnClickListener(v->Tools.swapFragment(requireActivity(),CuboAdvancedVideoFragment.class,"CuboAdvancedVideoFragment",null));
+  note(body,"La distancia de renderizado y el límite de FPS se ajustan dentro de Minecraft. No se muestran aquí como controles sin efecto.");
+  return scroll;
+ }
+ private interface Changed {void set(boolean value);}
+ private Switch toggle(LinearLayout parent,String label,String description,String key,boolean initial,Changed callback){
+  LinearLayout row=column();LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(-1,-2);rp.topMargin=dp(14);parent.addView(row,rp);
+  Switch control=new Switch(requireContext());control.setText(label);control.setTextSize(16);control.setTextColor(TEXT);control.setPadding(0,dp(5),0,dp(5));control.setSwitchMinWidth(dp(48));control.setThumbTintList(ColorStateList.valueOf(0xFFF0F8F3));control.setTrackTintList(new ColorStateList(new int[][]{new int[]{android.R.attr.state_checked},new int[]{}},new int[]{ACCENT,0xFF435349}));control.setChecked(initial);row.addView(control,new LinearLayout.LayoutParams(-1,dp(52)));note(row,description);
+  control.setOnCheckedChangeListener((v,checked)->{saveBoolean(key,checked);if(callback!=null)callback.set(checked);});return control;
+ }
+ private void resolution(LinearLayout image){
+  title(image,"Resolución del juego");note(image,"Menor resolución reduce la carga gráfica; mayor resolución mejora la nitidez.");
+  TextView value=text("",26,ACCENT);value.setTypeface(Typeface.DEFAULT,Typeface.BOLD);image.addView(value);
+  SeekBar seek=new SeekBar(requireContext());seek.setMax(15);int current=Math.max(25,Math.min(100,(int)(LauncherPreferences.PREF_SCALE_FACTOR*100)));int progress=Math.round((current-25)/5f);value.setText((25+progress*5)+" %");seek.setProgress(progress);seek.setProgressTintList(ColorStateList.valueOf(ACCENT));seek.setThumbTintList(ColorStateList.valueOf(ACCENT));image.addView(seek,new LinearLayout.LayoutParams(-1,dp(54)));
+  seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar s,int p,boolean user){value.setText((25+p*5)+" %");}public void onStartTrackingTouch(SeekBar s){}public void onStopTrackingTouch(SeekBar s){prefs().edit().putInt("resolutionRatio",25+s.getProgress()*5).apply();LauncherPreferences.loadPreferences(requireContext());}});
+ }
+ private void rendererCards(){
+  renderers.removeAllViews();RendererCache compatible=RendererCache.getCompatibleRenderers(requireContext());String selected=prefs().getString("renderer","opengles2");
+  if(compatible.rendererIds.isEmpty()){note(renderers,"No se detectaron renderizadores disponibles. Revisa la instalación del motor.");return;}
+  for(int i=0;i<compatible.rendererIds.size();i++){
+   final String id=compatible.rendererIds.get(i);String name=compatible.rendererDisplayNames[i];boolean active=id.equals(selected);
+   LinearLayout c=card(renderers,active);title(c,(active?"●  ":"○  ")+name);String lower=(id+" "+name).toLowerCase(java.util.Locale.ROOT);
+   String desc=lower.contains("zink")?"OpenGL sobre Vulkan. La compatibilidad depende del controlador y del juego.":lower.contains("gl4es")?"Traducción de OpenGL a OpenGL ES.":lower.contains("ltw")?"Capa de traducción gráfica. Prueba su compatibilidad con tu versión.":"Motor disponible según la detección de MojoLauncher.";
+   note(c,desc);if(active)note(c,"Seleccionado para el próximo inicio");
+   c.setOnClickListener(v->{prefs().edit().putString("renderer",id).apply();LauncherPreferences.loadPreferences(requireContext());rendererCards();});
+  }
+ }
+ @Override public void onDestroyView(){super.onDestroyView();body=null;renderers=null;vsync=null;}
 }
