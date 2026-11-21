@@ -63,7 +63,7 @@ public class AccountSpinner extends AppCompatSpinner implements LoginListener, A
 
         @Override
         public boolean onValueSet(String key, @NonNull String value) {
-            mLoginBarPaint.setColor(getResources().getColor(R.color.minebutton_color));
+            mLoginBarPaint.setColor(0xFF35D6A0);
             BackgroundLogin backgroundLogin = mAuthType.createAuth();
             backgroundLogin.createAccount(AccountSpinner.this, value);
             return false;
@@ -127,8 +127,8 @@ public class AccountSpinner extends AppCompatSpinner implements LoginListener, A
         setOnItemSelectedListener(this);
         reload();
 
-        setBackgroundColor(getResources().getColor(R.color.background_status_bar));
-        mLoginBarPaint.setColor(getResources().getColor(R.color.minebutton_color));
+        setBackgroundColor(0xFF101A16);
+        mLoginBarPaint.setColor(0xFF35D6A0);
         mLoginBarPaint.setStrokeWidth(getResources().getDimensionPixelOffset(R.dimen._2sdp));
         mLoginStepAnimator.addUpdateListener(this);
         mLoginStep = mMaxSteps;
@@ -242,7 +242,8 @@ public class AccountSpinner extends AppCompatSpinner implements LoginListener, A
         Account account = mAdapter.getItem(i);
         if(account == null) {
             if(i == 0) {
-                createAccount();
+                // Selecting the placeholder during initialization must not open login.
+                // Explicit clicks on the account row still call createAccount().
             }else {
                 Tools.showError(adapterView.getContext(), new NullPointerException());
             }
