@@ -64,6 +64,8 @@ public class LauncherActivity extends BaseActivity {
         public void onFragmentResumed(@NonNull FragmentManager fm, @NonNull Fragment f) {
             mSettingsButton.setImageDrawable(ContextCompat.getDrawable(getBaseContext(), f instanceof MainMenuFragment
                     ? R.drawable.ic_px_sliders : R.drawable.ic_px_home));
+            View toolbar = findViewById(R.id.cubo_toolbar);
+            if (toolbar != null) toolbar.setVisibility(f instanceof MainMenuFragment ? View.GONE : View.VISIBLE);
         }
     };
 
