@@ -35,6 +35,57 @@ public class MainMenuFragment extends Fragment {
  private LinearLayout body, nav;
  private int tab=0;
  private File folder;
+ private int screenGeneration;
+ private int visibleLimit=40;
+ private java.util.concurrent.Future<?> pendingListing;
+ private static class Entry {
+  final File file; final boolean directory; final long size;
+  Entry(File file){this.file=file;directory=file.isDirectory();size=directory?0:file.length();}
+ }
+ private interface ListingReady { void show(Entry[] entries); }
+ private void listAsync(File directory,boolean modsOnly,ListingReady ready){
+  final int generation=screenGeneration;
+  if(pendingListing!=null)pendingListing.cancel(true);
+  final TextView loading=text("Leyendo archivos…",14,MUTED);body.addView(loading);
+  pendingListing=MojoApplication.sExecutorService.submit(()->{
+   try {
+    File[] files=directory.listFiles();java.util.ArrayList<Entry> entries=new java.util.ArrayList<>();
+    if(files!=null)for(File file:files){
+     if(Thread.currentThread().isInterrupted())return;
+     if(modsOnly&&(!file.isFile()||(!file.getName().endsWith(".jar")&&!file.getName().endsWith(".jar.disabled"))))continue;
+     entries.add(new Entry(file));
+    }
+    entries.sort((a,b)->a.directory!=b.directory?(a.directory?-1:1):a.file.getName().compareToIgnoreCase(b.file.getName()));
+    Entry[] result=entries.toArray(new Entry[0]);
+    Tools.runOnUiThread(()->{if(!isAdded()||body==null||screenGeneration!=generation)return;body.removeView(loading);ready.show(result);});
+   }catch(Exception e){Tools.runOnUiThread(()->{if(isAdded()&&body!=null&&screenGeneration==generation){body.removeView(loading);hint("No se pudo leer la carpeta: "+e.getMessage());}});}
+  });
+ }
+ private void showEntries(Entry[] entries,boolean modsOnly,File base,int start){
+  int end=Math.min(start+40,entries.length);
+  for(int i=start;i<end;i++){
+   Entry entry=entries[i];File f=entry.file;
+   if(modsOnly){boolean disabled=f.getName().endsWith(".disabled");
+    row(f.getName(),disabled?"Desactivado · toca para activar":"Activo · toca para desactivar",()->{
+     if(!ProgressLayout.ensureNoOngoingTasks(requireContext()))return;
+     new androidx.appcompat.app.AlertDialog.Builder(requireContext()).setTitle(disabled?"¿Activar mod?":"¿Desactivar mod?").setMessage(f.getName()).setPositiveButton("Confirmar",(d,w)->{
+      File dest=new File(f.getParentFile(),disabled?f.getName().substring(0,f.getName().length()-9):f.getName()+".disabled");
+      if(dest.exists()||!f.renameTo(dest))message("No se pudo cambiar el estado del mod");render();
+     }).setNegativeButton("Cancelar",null).show();
+    });
+   }else{
+    row(f.getName(),entry.directory?"Carpeta":(entry.size/1024)+" KB",()->{
+     if(entry.directory){try{if(!f.getCanonicalPath().startsWith(base.getCanonicalPath()+File.separator)){message("Ruta fuera de la instancia");return;}}catch(IOException e){return;}folder=f;render();}
+     else Tools.openPath(requireContext(),f,false);
+    });
+   }
+  }
+  if(end<entries.length){
+   Button next=new Button(requireContext());next.setText("Cargar 40 más ("+(entries.length-end)+" restantes)");next.setAllCaps(false);next.setTextColor(GREEN);
+   body.addView(next,new LinearLayout.LayoutParams(-1,dp(56)));
+   next.setOnClickListener(v->{body.removeView(next);showEntries(entries,modsOnly,base,end);});
+  }
+ }
  private final ActivityResultLauncher<Object> installer=registerForActivityResult(new OpenDocumentWithExtension("jar"),uri->{
   if(uri!=null) Tools.launchModInstaller(requireContext(),uri);
  });
@@ -92,7 +143,7 @@ public class MainMenuFragment extends Fragment {
  @Override public void onSaveInstanceState(@NonNull Bundle out){super.onSaveInstanceState(out);out.putInt("cubo_tab",tab);}
  @Override public void onResume(){super.onResume();if(body!=null)render();ExtraCore.setValue(ExtraConstants.REFRESH_ACCOUNT_SPINNER,true);}
  private void select(int n){tab=n;folder=null;render();}
- private void render(){if(body==null||!isAdded())return;body.removeAllViews();nav.removeAllViews();
+ private void render(){if(body==null||!isAdded())return;screenGeneration++;if(pendingListing!=null)pendingListing.cancel(true);body.removeAllViews();nav.removeAllViews();
   String[] labels={"Inicio","Versiones","Mods","Archivos","Más"};
   for(int i=0;i<5;i++){final int n=i;LinearLayout item=column();item.setGravity(Gravity.CENTER);if(tab==i)item.setBackground(shape(0xFF103324,18));
    View icon=new NavIcon(requireContext(),i,tab==i?GREEN:MUTED);item.addView(icon,new LinearLayout.LayoutParams(dp(23),dp(23)));
@@ -114,7 +165,7 @@ public class MainMenuFragment extends Fragment {
   });
   button(main,"Cambiar versión",false,()->select(1));
   row("Controles","Botones táctiles, perfiles y mando",()->startActivity(new Intent(requireContext(),CustomControlsActivity.class)));
-  row("Gráficos y rendimiento","Renderizador, resolución y límites de FPS",()->open(LauncherPreferenceVideoFragment.class));
+  row("Gráficos y rendimiento","Renderizador, resolución y compatibilidad",()->open(LauncherPreferenceVideoFragment.class));
   hint("Cubo Launcher · basado en MojoLauncher");
  }
  private void accountMenu(){
@@ -138,30 +189,24 @@ public class MainMenuFragment extends Fragment {
   File base=game();if(base==null){button(body,"Seleccionar instancia",true,()->select(1));return;}
   button(body,"+ Importar mod .jar",true,()->{if(ProgressLayout.ensureNoOngoingTasks(requireContext()))modImport.launch(null);});
   button(body,"Buscar modpacks (gestor de Mojo)",false,()->open(SearchModFragment.class));
-  File[] list=new File(base,"mods").listFiles(f->f.isFile()&&(f.getName().endsWith(".jar")||f.getName().endsWith(".jar.disabled")));
-  if(list==null||list.length==0){hint("No hay mods instalados en esta instancia.");return;}
-  Arrays.sort(list,(a,b)->a.getName().compareToIgnoreCase(b.getName()));
-  for(File f:list){boolean disabled=f.getName().endsWith(".disabled");row(f.getName(),disabled?"Desactivado · toca para activar":"Activo · toca para desactivar",()->{
-   if(!ProgressLayout.ensureNoOngoingTasks(requireContext()))return;
-   new androidx.appcompat.app.AlertDialog.Builder(requireContext()).setTitle(disabled?"¿Activar mod?":"¿Desactivar mod?").setMessage(f.getName()).setPositiveButton("Confirmar",(d,w)->{
-    File dest=new File(f.getParentFile(),disabled?f.getName().substring(0,f.getName().length()-9):f.getName()+".disabled");
-    if(dest.exists()||!f.renameTo(dest))message("No se pudo cambiar el estado del mod");render();
-   }).setNegativeButton("Cancelar",null).show();});}
+  listAsync(new File(base,"mods"),true,entries->{
+   if(entries.length==0)hint("No hay mods instalados en esta instancia.");
+   else showEntries(entries,true,base,0);
+  });
  }
+
  private void files(){heading("Archivos");File base=game();if(base==null){hint("Selecciona una instancia primero.");return;}
   if(folder==null)folder=base;
   hint(folder.equals(base)?"Carpeta de la instancia":folder.getName());
   if(!folder.equals(base))button(body,"← Carpeta anterior",false,()->{folder=folder.getParentFile();render();});
   final File current=folder;
   button(body,"Abrir en gestor de archivos",false,()->Tools.openPath(requireContext(),current,false));
-  File[] list=folder.listFiles();if(list==null||list.length==0){hint("Carpeta vacía o no disponible.");return;}
-  Arrays.sort(list,(a,b)->a.isDirectory()!=b.isDirectory()?(a.isDirectory()?-1:1):a.getName().compareToIgnoreCase(b.getName()));
-  int count=0;for(File f:list){if(++count>200){hint("Mostrando los primeros 200 elementos. Usa el gestor para ver todos.");break;}
-   row(f.getName(),f.isDirectory()?"Carpeta":(f.length()/1024)+" KB",()->{
-    if(f.isDirectory()){try{if(!f.getCanonicalPath().startsWith(base.getCanonicalPath()+File.separator)){message("Ruta fuera de la instancia");return;}}catch(IOException e){return;}folder=f;render();}
-    else Tools.openPath(requireContext(),f,false);
-   });}
+  listAsync(folder,false,entries->{
+   if(entries.length==0)hint("Carpeta vacía o no disponible.");
+   else showEntries(entries,false,base,0);
+  });
  }
+
  private void more(){heading("Más");hint("Configuración clara, agrupada por función.");
   row("Cuenta de Minecraft","Añadir o cambiar de cuenta",this::accountMenu);
   row("Controles","Editor de botones táctiles",()->startActivity(new Intent(requireContext(),CustomControlsActivity.class)));
@@ -185,5 +230,5 @@ public class MainMenuFragment extends Fragment {
    canvas.restore();
   }
  }
- @Override public void onDestroyView(){super.onDestroyView();body=null;nav=null;}
+ @Override public void onDestroyView(){screenGeneration++;if(pendingListing!=null)pendingListing.cancel(true);super.onDestroyView();body=null;nav=null;}
 }
