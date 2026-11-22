@@ -35,6 +35,17 @@ public class MainMenuFragment extends Fragment {
  private LinearLayout body, nav;
  private int tab=0;
  private File folder;
+ private java.util.concurrent.Future<?> screenTask,accountTask;
+ private boolean accountBusy;
+ private long lastListingMs=-1;
+ private int lastListingCount;
+ private boolean validScreen(int generation){return isAdded()&&body!=null&&screenGeneration==generation&&getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED);}
+ private void cancelScreenWork(){
+  if(screenTask!=null){screenTask.cancel(true);screenTask=null;}
+  if(accountTask!=null){accountTask.cancel(true);accountTask=null;}
+  accountBusy=false;
+ }
+
  private int screenGeneration;
  private int visibleLimit=40;
  private java.util.concurrent.Future<?> pendingListing;
@@ -48,8 +59,10 @@ public class MainMenuFragment extends Fragment {
   if(pendingListing!=null)pendingListing.cancel(true);
   final TextView loading=text("Leyendo archivos…",14,MUTED);body.addView(loading);
   pendingListing=MojoApplication.sExecutorService.submit(()->{
+   final long started=android.os.SystemClock.elapsedRealtime();
    try {
-    File[] files=directory.listFiles();java.util.ArrayList<Entry> entries=new java.util.ArrayList<>();
+    File[] files=directory.listFiles();
+    if(files==null&&directory.exists())throw new IOException("Carpeta no accesible");java.util.ArrayList<Entry> entries=new java.util.ArrayList<>();
     if(files!=null)for(File file:files){
      if(Thread.currentThread().isInterrupted())return;
      if(modsOnly&&(!file.isFile()||(!file.getName().endsWith(".jar")&&!file.getName().endsWith(".jar.disabled"))))continue;
@@ -57,7 +70,8 @@ public class MainMenuFragment extends Fragment {
     }
     entries.sort((a,b)->a.directory!=b.directory?(a.directory?-1:1):a.file.getName().compareToIgnoreCase(b.file.getName()));
     Entry[] result=entries.toArray(new Entry[0]);
-    Tools.runOnUiThread(()->{if(!isAdded()||body==null||screenGeneration!=generation)return;body.removeView(loading);ready.show(result);});
+    final long duration=android.os.SystemClock.elapsedRealtime()-started;
+    Tools.runOnUiThread(()->{if(!isAdded()||body==null||screenGeneration!=generation)return;body.removeView(loading);lastListingMs=duration;lastListingCount=result.length;ready.show(result);});
    }catch(Exception e){Tools.runOnUiThread(()->{if(isAdded()&&body!=null&&screenGeneration==generation){body.removeView(loading);hint("No se pudo leer la carpeta: "+e.getMessage());}});}
   });
  }
@@ -138,12 +152,12 @@ public class MainMenuFragment extends Fragment {
   ScrollView scroll=new ScrollView(requireContext());scroll.setFillViewport(true);scroll.setClipToPadding(false);
   body=column();body.setPadding(dp(18),dp(22),dp(18),dp(24));scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
   nav=new LinearLayout(requireContext());nav.setPadding(dp(4),dp(8),dp(4),dp(8));nav.setBackgroundColor(0xFF0B140F);root.addView(nav,new LinearLayout.LayoutParams(-1,dp(72)));
-  render();return root;
+  return root;
  }
  @Override public void onSaveInstanceState(@NonNull Bundle out){super.onSaveInstanceState(out);out.putInt("cubo_tab",tab);}
  @Override public void onResume(){super.onResume();if(body!=null)render();ExtraCore.setValue(ExtraConstants.REFRESH_ACCOUNT_SPINNER,true);}
  private void select(int n){tab=n;folder=null;render();}
- private void render(){if(body==null||!isAdded())return;screenGeneration++;if(pendingListing!=null)pendingListing.cancel(true);body.removeAllViews();nav.removeAllViews();
+ private void render(){if(body==null||!isAdded())return;screenGeneration++;cancelScreenWork();if(pendingListing!=null)pendingListing.cancel(true);body.removeAllViews();nav.removeAllViews();
   String[] labels={"Inicio","Versiones","Mods","Archivos","Más"};
   for(int i=0;i<5;i++){final int n=i;LinearLayout item=column();item.setGravity(Gravity.CENTER);if(tab==i)item.setBackground(shape(0xFF103324,18));
    View icon=new NavIcon(requireContext(),i,tab==i?GREEN:MUTED);item.addView(icon,new LinearLayout.LayoutParams(dp(23),dp(23)));
@@ -151,12 +165,21 @@ public class MainMenuFragment extends Fragment {
   switch(tab){case 1:versions();break;case 2:mods();break;case 3:files();break;case 4:more();break;default:home();}
  }
  private void home(){
+  final int generation=screenGeneration;
+  hint("Cargando tu instancia…");
+  screenTask=MojoApplication.sExecutorService.submit(()->{
+   try {
+    Instance inst=Instances.loadSelectedInstance();Account account=Accounts.getCurrent();
+    Tools.runOnUiThread(()->{if(!validScreen(generation))return;body.removeAllViews();showHome(inst,account);});
+   }catch(Exception e){Tools.runOnUiThread(()->{if(validScreen(generation)){body.removeAllViews();heading("CUBO");hint("No se pudo leer la configuración local. No se han borrado datos.");button(body,"Reintentar",true,this::render);}});}
+  });
+ }
+ private void showHome(Instance inst,Account account){
   TextView brand=heading("CUBO");brand.setLetterSpacing(0.15f);hint("MINECRAFT JAVA EDITION");
-  Instance inst=Instances.loadSelectedInstance();LinearLayout main=card(body);
+  LinearLayout main=card(body);
   main.addView(text("TU INSTANCIA",12,GREEN));gap(main,10);
   TextView version=text(inst==null?"Elige una versión":inst.name,26,WHITE);version.setTypeface(Typeface.DEFAULT,Typeface.BOLD);main.addView(version);
   main.addView(text(inst==null?"Crea tu primera instancia para empezar":String.valueOf(inst.versionId),14,MUTED));
-  Account account=Accounts.getCurrent();
   button(main,account==null?"Añadir cuenta de Minecraft":"Cuenta: "+account.username,false,this::accountMenu);
   button(main,"▶  Jugar",true,()->{
    if(Accounts.getCurrent()==null){accountMenu();return;}
@@ -169,20 +192,41 @@ public class MainMenuFragment extends Fragment {
   hint("Cubo Launcher · basado en MojoLauncher");
  }
  private void accountMenu(){
-  try {
-   Accounts accounts=Accounts.load();String[] names=new String[accounts.accounts.size()+1];names[0]="Añadir cuenta";
-   for(int i=0;i<accounts.accounts.size();i++)names[i+1]=accounts.accounts.get(i).username;
-   new androidx.appcompat.app.AlertDialog.Builder(requireContext()).setTitle("Cuenta de Minecraft").setItems(names,(d,index)->{
-    if(index==0)ExtraCore.setValue(ExtraConstants.SELECT_AUTH_METHOD,true);
-    else {Accounts.setCurrent(accounts.accounts.get(index-1));ExtraCore.setValue(ExtraConstants.REFRESH_ACCOUNT_SPINNER,true);render();}
-   }).setNegativeButton("Cerrar",null).show();
-  }catch(Exception e){Tools.showError(requireContext(),e);}
+  if(accountBusy)return;
+  accountBusy=true;final int generation=screenGeneration;
+  accountTask=MojoApplication.sExecutorService.submit(()->{
+   try {
+    Accounts accounts=Accounts.load();String[] names=new String[accounts.accounts.size()+1];names[0]="Añadir cuenta";
+    for(int i=0;i<accounts.accounts.size();i++)names[i+1]=accounts.accounts.get(i).username;
+    Tools.runOnUiThread(()->{
+     if(!validScreen(generation))return;accountBusy=false;
+     new androidx.appcompat.app.AlertDialog.Builder(requireContext()).setTitle("Cuenta de Minecraft").setItems(names,(d,index)->{
+      if(index==0)ExtraCore.setValue(ExtraConstants.SELECT_AUTH_METHOD,true);
+      else {Accounts.setCurrent(accounts.accounts.get(index-1));ExtraCore.setValue(ExtraConstants.REFRESH_ACCOUNT_SPINNER,true);render();}
+     }).setNegativeButton("Cerrar",null).show();
+    });
+   }catch(Exception e){Tools.runOnUiThread(()->{if(validScreen(generation)){accountBusy=false;message("No se pudieron leer las cuentas. No se ha cambiado ningún dato.");}});}
+  });
  }
  private void versions(){heading("Versiones");hint("Instancias instaladas. Cada una conserva su configuración.");
   button(body,"+ Crear o instalar versión",true,()->open(ProfileTypeSelectFragment.class));
-  try {Instances all=Instances.loadDisplay();for(DisplayInstance inst:all.list){
+  final int generation=screenGeneration;final TextView loading=text("Leyendo instancias…",14,MUTED);body.addView(loading);
+  screenTask=MojoApplication.sExecutorService.submit(()->{
+   try {
+    Instances all=Instances.loadDisplay();
+    Tools.runOnUiThread(()->{if(!validScreen(generation))return;body.removeView(loading);showVersions(all.list,0);});
+   }catch(Exception e){Tools.runOnUiThread(()->{if(validScreen(generation)){body.removeView(loading);hint("No se pudieron leer las instancias. Pulsa otra pestaña y vuelve para reintentar.");}});}
+  });
+ }
+ private void showVersions(java.util.List<DisplayInstance> list,int start){
+  int end=Math.min(start+30,list.size());
+  for(int i=start;i<end;i++){DisplayInstance inst=list.get(i);
    row(inst.name,String.valueOf(inst.versionId),()->{Instances.setSelectedInstance(inst);new androidx.appcompat.app.AlertDialog.Builder(requireContext()).setTitle(inst.name).setItems(new String[]{"Usar esta instancia","Editar configuración"},(d,n)->{if(n==0)select(0);else open(InstanceEditorFragment.class);}).show();});
-  }}catch(Exception e){hint("No se pudieron leer las instancias: "+e.getMessage());}
+  }
+  if(end<list.size()){
+   Button next=new Button(requireContext());next.setText("Cargar más instancias");next.setAllCaps(false);next.setTextColor(GREEN);body.addView(next,new LinearLayout.LayoutParams(-1,dp(56)));
+   next.setOnClickListener(v->{body.removeView(next);showVersions(list,end);});
+  }
  }
  private File game(){Instance i=Instances.loadSelectedInstance();return i==null?null:i.getGameDirectory();}
  private void mods(){heading("Mods");hint("Mods de la instancia seleccionada. Deben ser compatibles con su versión y cargador.");
@@ -214,9 +258,43 @@ public class MainMenuFragment extends Fragment {
   row("Java y memoria","Entornos Java y opciones de la máquina virtual",()->open(LauncherPreferenceJavaFragment.class));
   row("Preferencias de controles","Comportamiento de entrada y mando",()->open(LauncherPreferenceControlFragment.class));
   row("Configuración avanzada","Preferencias completas del proyecto base",()->open(LauncherPreferenceFragment.class));
+  row("Diagnóstico local","Memoria, espacio libre y tiempos de carga; sin datos de cuentas",this::diagnostics);
   row("Consola y registros","Compartir registros para diagnóstico",()->Tools.shareLog(requireContext()));
   row("Instalador Java","Ejecutar un instalador .jar",()->{if(ProgressLayout.ensureNoOngoingTasks(requireContext()))installer.launch(null);});
   hint("Cubo es un derivado de MojoLauncher. Las pantallas de instalación, autenticación y ajustes detallados conservan por ahora el diseño del proyecto base.");
+ }
+ private void diagnostics(){
+  final Context context=requireContext().getApplicationContext();final int generation=screenGeneration;
+  final long listingTime=lastListingMs;final int listingCount=lastListingCount;
+  if(screenTask!=null)screenTask.cancel(true);
+  screenTask=MojoApplication.sExecutorService.submit(()->{
+   try {
+    android.app.ActivityManager manager=(android.app.ActivityManager)context.getSystemService(Context.ACTIVITY_SERVICE);
+    android.app.ActivityManager.MemoryInfo memory=new android.app.ActivityManager.MemoryInfo();manager.getMemoryInfo(memory);
+    Runtime runtime=Runtime.getRuntime();long mb=1024L*1024L;
+    StringBuilder report=new StringBuilder("CUBO · DIAGNÓSTICO LOCAL\n");
+    report.append("Versión: ").append(BuildConfig.VERSION_NAME).append("\n");
+    report.append("Dispositivo: ").append(android.os.Build.MANUFACTURER).append(" ").append(android.os.Build.MODEL).append("\n");
+    report.append("Android: ").append(android.os.Build.VERSION.RELEASE).append(" (API ").append(android.os.Build.VERSION.SDK_INT).append(")\n");
+    report.append("RAM total del sistema: ").append(memory.totalMem/mb).append(" MB\n");
+    report.append("RAM disponible del sistema: ").append(memory.availMem/mb).append(" MB\n");
+    report.append("Sistema con poca memoria: ").append(memory.lowMemory?"sí":"no").append("\n");
+    report.append("Heap Java usado de este proceso: ").append((runtime.totalMemory()-runtime.freeMemory())/mb).append(" MB\n");
+    report.append("Límite de heap de este proceso: ").append(runtime.maxMemory()/mb).append(" MB\n");
+    report.append("Espacio utilizable en almacenamiento de la app: ").append(context.getFilesDir().getUsableSpace()/mb).append(" MB\n");
+    if(android.os.Build.VERSION.SDK_INT>=29){android.os.PowerManager power=(android.os.PowerManager)context.getSystemService(Context.POWER_SERVICE);report.append("Estado térmico Android (0 sin restricción, 6 apagado): ").append(power.getCurrentThermalStatus()).append("\n");}
+    if(listingTime>=0)report.append("Última lectura y ordenación de carpeta: ").append(listingTime).append(" ms; ").append(listingCount).append(" elementos\n");
+    report.append("\nNo mide FPS ni memoria nativa de Minecraft. El tiempo de carpeta no incluye el dibujado de la interfaz.\nSin cuentas, tokens, nombres de archivos ni rutas personales. No se envía automáticamente.");
+    final String result=report.toString();
+    Tools.runOnUiThread(()->{if(!validScreen(generation))return;
+     TextView content=text(result,14,WHITE);content.setPadding(dp(20),dp(12),dp(20),dp(12));content.setTextIsSelectable(true);
+     ScrollView scroll=new ScrollView(requireContext());scroll.addView(content);
+     new androidx.appcompat.app.AlertDialog.Builder(requireContext()).setTitle("Diagnóstico de Cubo").setView(scroll).setNegativeButton("Cerrar",null).setPositiveButton("Compartir",(d,w)->{
+      Intent share=new Intent(Intent.ACTION_SEND);share.setType("text/plain");share.putExtra(Intent.EXTRA_TEXT,result);share.putExtra(Intent.EXTRA_SUBJECT,"Diagnóstico de Cubo");startActivity(Intent.createChooser(share,"Compartir diagnóstico"));
+     }).show();
+    });
+   }catch(Exception e){Tools.runOnUiThread(()->{if(validScreen(generation))message("No se pudo obtener el diagnóstico en este dispositivo.");});}
+  });
  }
  private static class NavIcon extends View {
   private final Paint p=new Paint(3);private final int kind,color;
@@ -230,5 +308,5 @@ public class MainMenuFragment extends Fragment {
    canvas.restore();
   }
  }
- @Override public void onDestroyView(){screenGeneration++;if(pendingListing!=null)pendingListing.cancel(true);super.onDestroyView();body=null;nav=null;}
+ @Override public void onDestroyView(){screenGeneration++;cancelScreenWork();if(pendingListing!=null)pendingListing.cancel(true);super.onDestroyView();body=null;nav=null;}
 }
