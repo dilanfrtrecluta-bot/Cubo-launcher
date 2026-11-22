@@ -155,7 +155,9 @@ public class MainMenuFragment extends Fragment {
   return root;
  }
  @Override public void onSaveInstanceState(@NonNull Bundle out){super.onSaveInstanceState(out);out.putInt("cubo_tab",tab);}
- @Override public void onResume(){super.onResume();if(body!=null)render();ExtraCore.setValue(ExtraConstants.REFRESH_ACCOUNT_SPINNER,true);}
+ @Override public void onResume(){super.onResume();if(body!=null)render();ExtraCore.setValue(ExtraConstants.REFRESH_ACCOUNT_SPINNER,true);
+  if(body!=null)body.post(()->{if(isAdded()&&isResumed()&&isVisible()&&body!=null)CuboOptimizedProfile.offer(requireActivity(),true,()->{if(isAdded()&&body!=null)render();});});
+ }
  private void select(int n){tab=n;folder=null;render();}
  private void render(){if(body==null||!isAdded())return;screenGeneration++;cancelScreenWork();if(pendingListing!=null)pendingListing.cancel(true);body.removeAllViews();nav.removeAllViews();
   String[] labels={"Inicio","Versiones","Mods","Archivos","Más"};
@@ -210,6 +212,7 @@ public class MainMenuFragment extends Fragment {
  }
  private void versions(){heading("Versiones");hint("Instancias instaladas. Cada una conserva su configuración.");
   button(body,"+ Crear o instalar versión",true,()->open(ProfileTypeSelectFragment.class));
+  button(body,"Preparar Cubo Optimizado 1.20.1",false,()->CuboOptimizedProfile.offer(requireActivity(),false,()->{if(isAdded()&&body!=null)render();}));
   final int generation=screenGeneration;final TextView loading=text("Leyendo instancias…",14,MUTED);body.addView(loading);
   screenTask=MojoApplication.sExecutorService.submit(()->{
    try {
@@ -252,6 +255,7 @@ public class MainMenuFragment extends Fragment {
  }
 
  private void more(){heading("Más");hint("Configuración clara, agrupada por función.");
+  row("Cubo Optimizado 1.20.1","Preparar perfil Fabric con Lithium y FerriteCore · beta",()->CuboOptimizedProfile.offer(requireActivity(),false,()->{if(isAdded()&&body!=null)render();}));
   row("Cuenta de Minecraft","Añadir o cambiar de cuenta",this::accountMenu);
   row("Controles","Editor de botones táctiles",()->startActivity(new Intent(requireContext(),CustomControlsActivity.class)));
   row("Gráficos y rendimiento","Renderizador, resolución y opciones de vídeo",()->open(LauncherPreferenceVideoFragment.class));
