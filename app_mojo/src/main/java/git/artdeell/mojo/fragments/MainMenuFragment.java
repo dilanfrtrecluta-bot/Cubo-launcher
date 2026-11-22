@@ -233,6 +233,7 @@ public class MainMenuFragment extends Fragment {
  }
  private File game(){Instance i=Instances.loadSelectedInstance();return i==null?null:i.getGameDirectory();}
  private void mods(){heading("Mods");hint("Mods de la instancia seleccionada. Deben ser compatibles con su versión y cargador.");
+  button(body,"Explorar Modrinth · mods y optimización",true,()->open(CuboModrinthFragment.class));
   File base=game();if(base==null){button(body,"Seleccionar instancia",true,()->select(1));return;}
   button(body,"+ Importar mod .jar",true,()->{if(ProgressLayout.ensureNoOngoingTasks(requireContext()))modImport.launch(null);});
   button(body,"Buscar modpacks (gestor de Mojo)",false,()->open(SearchModFragment.class));
