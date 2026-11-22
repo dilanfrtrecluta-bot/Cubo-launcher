@@ -24,6 +24,8 @@ public class JREUtils {
             ProcessBuilder logcatPb;
             @Override
             public void run() {
+                // Reading diagnostic output must not compete at normal CPU priority with rendering.
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
                 try {
                     if (logcatPb == null) {
                         // No filtering by tag anymore as that relied on incorrect log levels set in log.h
@@ -35,11 +37,13 @@ public class JREUtils {
                     Log.i("jrelog-logcat","Starting logcat");
                     java.lang.Process p = logcatPb.start();
 
-                    byte[] buf = new byte[1024];
+                    // Decode across reads correctly, with a reusable buffer and fewer tiny allocations.
+                    char[] buf = new char[8192];
                     int len;
-                    while ((len = p.getInputStream().read(buf)) != -1) {
-                        String currStr = new String(buf, 0, len);
-                        Logger.appendToLog(currStr);
+                    try (Reader logReader = new InputStreamReader(p.getInputStream(), java.nio.charset.StandardCharsets.UTF_8)) {
+                        while ((len = logReader.read(buf)) != -1) {
+                            Logger.appendToLog(new String(buf, 0, len));
+                        }
                     }
 
                     if (p.waitFor() != 0) {
